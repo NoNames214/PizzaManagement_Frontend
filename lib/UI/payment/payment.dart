@@ -1,14 +1,17 @@
+import 'dart:async';
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:pizza_management/data/api/api_constant.dart';
 import 'package:pizza_management/data/model/pizza.dart';
-import 'package:pizza_management/data/repository/ai_repository.dart';
 import 'package:pizza_management/data/repository/order_repository.dart';
 import 'package:pizza_management/data/request/order_request.dart';
 import 'package:pizza_management/data/request/order_details_request.dart';
-import '../../data/ai_recommend/interaction_type.dart';
+import 'package:pizza_management/data/service/vn_pay_service.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../data/repository/auth_repository.dart';
+import '../../data/repository/vn_pay_repository.dart';
 
-class PaymentScreen extends StatelessWidget {
+class PaymentScreen extends StatefulWidget {
   final Pizza pizza;
   final int quantity;
   final String size;
@@ -23,8 +26,56 @@ class PaymentScreen extends StatelessWidget {
   });
 
   @override
+  State<PaymentScreen> createState() => _PaymentScreenState();
+}
+
+class _PaymentScreenState extends State<PaymentScreen> {
+  late final AppLinks _appLinks;
+  StreamSubscription? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    _initDeepLinkListener();
+  }
+
+  void _initDeepLinkListener() {
+    _appLinks = AppLinks();
+    _sub = _appLinks.uriLinkStream.listen((uri) {
+      if (uri.scheme == 'pizza_management' && uri.host == 'payment-callback') {
+        final status = uri.queryParameters['status'];
+        final orderId = uri.queryParameters['orderId'];
+
+        if (!mounted) return;
+        if (status == 'success') {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Payment Success. Order ID: $orderId')),
+          );
+
+          if (widget.refreshRecommend != null) {
+            widget.refreshRecommend!();
+          }
+        } else {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Payment Failed')),
+          );
+        }
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    double total = pizza.price * quantity;
+    double total = widget.pizza.price * widget.quantity;
+
     return Scaffold(
       backgroundColor: const Color(0xFF90CAF9),
       appBar: AppBar(
@@ -49,7 +100,7 @@ class PaymentScreen extends StatelessWidget {
                       ClipRRect(
                         borderRadius: BorderRadius.circular(15),
                         child: Image.network(
-                          ApiConstant.pizzaImage(pizza.image),
+                          ApiConstant.pizzaImage(widget.pizza.image),
                           width: 80,
                           height: 80,
                           fit: BoxFit.cover,
@@ -61,7 +112,7 @@ class PaymentScreen extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              pizza.name,
+                              widget.pizza.name,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
@@ -71,11 +122,11 @@ class PaymentScreen extends StatelessWidget {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              "Size: $size",
+                              "Size: ${widget.size}",
                               style: const TextStyle(fontSize: 16),
                             ),
                             Text(
-                              "Quantity: $quantity",
+                              "Quantity: ${widget.quantity}",
                               style: const TextStyle(fontSize: 16),
                             ),
                           ],
@@ -125,30 +176,40 @@ class PaymentScreen extends StatelessWidget {
               height: 60,
               child: ElevatedButton(
                 onPressed: () async {
-                  final orderRepository = OrderRepository();
-                  final authRepository = AuthRepository();
-                  final token = await authRepository.getToken();
-                  final List<OrderDetailsRequest> detailsRequest = [
-                    OrderDetailsRequest(
-                        pizzaId: pizza.id,
-                        quantity: quantity
-                    ),
-                  ];
-                  final orderRequest = OrderRequest(detailsRequest: detailsRequest);
-                  final order = await orderRepository.createOrder(orderRequest);
-                  final String eventType = InteractionType.purchase;
+                  try {
+                    final authRepository = AuthRepository();
+                    final token = await authRepository.getToken();
+                    if (token == null) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Token is null')),
+                      );
+                      return;
+                    }
+                    final orderRepository = OrderRepository();
+                    final detailsRequest = <OrderDetailsRequest>[
+                      OrderDetailsRequest(
+                        pizzaId: widget.pizza.id,
+                        quantity: widget.quantity,
+                      ),
+                    ];
+                    final orderRequest = OrderRequest(detailsRequest: detailsRequest);
+                    final order = await orderRepository.createOrder(orderRequest);
 
-                  if (token != null) {
-                    await orderRepository.processPayment(order.id, token);
-                    await AIRepository().trackUserAction(pizza.id, eventType, token);
-                    await refreshRecommend?.call();
-                    if (!context.mounted) return;
-                    Navigator.pop(context);
-                  }
-                  else {
+                    final vnPayRepository = VnPayRepository(VnPayService());
+                    final paymentUrl = await vnPayRepository.createPaymentUrl(order.id);
+                    final uri = Uri.parse(paymentUrl);
+                    final launched = await launchUrl(
+                      uri,
+                      mode: LaunchMode.inAppBrowserView,
+                    );
+                    if (!launched) {
+                      throw Exception('Could not launch VNPay');
+                    }
+                  } catch (e) {
                     if (!context.mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Token is null')),
+                      SnackBar(content: Text('Payment error: $e')),
                     );
                   }
                 },

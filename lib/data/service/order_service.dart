@@ -65,4 +65,19 @@ class OrderService {
       throw Exception(e.message);
       }
   }
+
+  Future<String> getOrderStatus (int orderId) async {
+    try {
+      final response = await _dio.get("/order/$orderId/status");
+      if (response.statusCode == 200) {
+        return response.data['status'].toString();
+      }
+      else {
+        throw Exception("Error Server: ${response.statusCode}");
+      }
+    }
+    on DioException catch (e) {
+      throw Exception(e.message);
+    }
+  }
 }

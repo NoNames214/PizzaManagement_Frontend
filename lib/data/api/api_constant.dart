@@ -1,5 +1,5 @@
 class ApiConstant {
-  static const String baseUrl = "https://localhost:7065";
+  static const String baseUrl = "http://192.168.1.199:5192";
   static const String apiUrl = "$baseUrl/api/";
 
   static String pizzaImage (String fileName) {

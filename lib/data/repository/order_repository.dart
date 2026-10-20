@@ -36,4 +36,14 @@ class OrderRepository {
       return false;
     }
   }
+
+  Future<String> getOrderStatus (int orderId) async {
+    try {
+      return await _orderService.getOrderStatus(orderId);
+    }
+    catch (e) {
+      logger.e("Get Order Status Failed: $e");
+      return "";
+    }
+  }
 }
